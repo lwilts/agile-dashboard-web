@@ -1,8 +1,0 @@
-name = "agiledash"
-compatibility_date = "2024-01-01"
-pages_build_output_dir = "dist"
-
-[env.production]
-routes = [
-  { pattern = "agile.lkwt.dev", custom_domain = true }
-]
