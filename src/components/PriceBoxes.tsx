@@ -27,9 +27,8 @@ export const PriceBoxes = ({
 
   return (
     <div className="price-boxes-container">
-      {/* Today Row */}
-      <div className="price-boxes-row">
-        {/* Current Price - Extra Large */}
+      <div className="price-boxes-grid">
+        {/* Current Price - Double Height */}
         <div
           className="price-box price-box-now"
           style={{
@@ -82,14 +81,11 @@ export const PriceBoxes = ({
             <span className="price-suffix">p/kWh</span>
           </div>
         </div>
-      </div>
 
-      {/* Tomorrow Row - Only show if tomorrow data is available */}
-      {hasTomorrow && (
-        <div className="price-boxes-row price-boxes-row-tomorrow">
-          {/* Tomorrow Min */}
+        {/* Tomorrow Min */}
+        {hasTomorrow && (
           <div
-            className="price-box"
+            className="price-box price-box-tomorrow"
             style={{
               backgroundColor: tomorrowMinPrice ? getPriceColor(tomorrowMinPrice) : colors.green,
             }}
@@ -100,10 +96,12 @@ export const PriceBoxes = ({
               <span className="price-suffix">p/kWh</span>
             </div>
           </div>
+        )}
 
-          {/* Tomorrow Max */}
+        {/* Tomorrow Max */}
+        {hasTomorrow && (
           <div
-            className="price-box"
+            className="price-box price-box-tomorrow"
             style={{
               backgroundColor: tomorrowMaxPrice ? getPriceColor(tomorrowMaxPrice) : colors.red,
             }}
@@ -114,10 +112,12 @@ export const PriceBoxes = ({
               <span className="price-suffix">p/kWh</span>
             </div>
           </div>
+        )}
 
-          {/* Tomorrow Gas */}
+        {/* Tomorrow Gas */}
+        {hasTomorrow && (
           <div
-            className="price-box"
+            className="price-box price-box-tomorrow"
             style={{ backgroundColor: colors.orange }}
           >
             <div className="price-box-label">Tomorrow Gas</div>
@@ -126,8 +126,8 @@ export const PriceBoxes = ({
               <span className="price-suffix">p/kWh</span>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 };

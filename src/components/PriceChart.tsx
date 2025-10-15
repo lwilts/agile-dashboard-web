@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import {
   BarChart,
   Bar,
@@ -8,6 +7,7 @@ import {
   ResponsiveContainer,
   Cell,
   ReferenceLine,
+  ReferenceArea,
   Label,
   Tooltip,
   LabelList,
@@ -28,13 +28,18 @@ export const PriceChart = ({
   currentHour,
   currentMinute,
 }: PriceChartProps) => {
-  const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
   const hasTomorrow = tomorrowPrices.length > 0;
 
-  // If we have tomorrow's data, only show second half of today (12 hours)
-  const displayToday = hasTomorrow && todayPrices.length >= 24
-    ? todayPrices.slice(24)
+  // If we have tomorrow's data, show from a few hours before current time
+  const displayToday = hasTomorrow && todayPrices.length >= 48
+    ? (() => {
+        // Calculate the starting index - show from 6 hours before current time
+        const hoursBack = 6;
+        const startHour = Math.max(0, currentHour - hoursBack);
+        const startIndex = startHour * 2; // 2 entries per hour (30 min intervals)
+        return todayPrices.slice(startIndex);
+      })()
     : todayPrices;
 
   const displayPrices = [...displayToday, ...tomorrowPrices];
@@ -149,22 +154,21 @@ export const PriceChart = ({
   };
 
   // Find the current period for the "Now" line
-  const currentPeriodData = chartData.find((d) => d.isCurrentPeriod);
+  const currentPeriodIndex = chartData.findIndex((d) => d.isCurrentPeriod);
+
+  // Find midnight (00:00) for the "Tomorrow" marker
+  const midnightIndex = chartData.findIndex((d) => d.hour === 0 && d.minute === 0);
+
+  // Calculate minimum chart width for mobile (minimum 12px per bar)
+  const minChartWidth = Math.max(600, chartData.length * 12);
 
   return (
     <div className="chart-container">
-      <ResponsiveContainer width="100%" height={400}>
-        <BarChart
+      <div className="chart-wrapper">
+        <ResponsiveContainer width="100%" height={400} minWidth={minChartWidth}>
+          <BarChart
           data={chartData}
           margin={{ top: 40, right: 20, left: 0, bottom: 20 }}
-          onMouseMove={(state: any) => {
-            if (state.isTooltipActive) {
-              setActiveIndex(state.activeTooltipIndex);
-            } else {
-              setActiveIndex(null);
-            }
-          }}
-          onMouseLeave={() => setActiveIndex(null)}
         >
           <CartesianGrid strokeDasharray="3 3" stroke={colors.gridline} vertical={false} />
           <XAxis
@@ -191,66 +195,49 @@ export const PriceChart = ({
             animationDuration={100}
           />
 
-          {/* Current time indicator - dashed vertical line */}
-          {currentPeriodData && (
-            <ReferenceLine
-              x={currentPeriodData.name}
-              stroke="white"
-              strokeWidth={3}
-              strokeDasharray="8 4"
-              isFront={true}
-            >
-              <Label
-                value="Now"
-                position="top"
-                fill="white"
-                fontSize={14}
-                fontWeight="bold"
-              />
-            </ReferenceLine>
-          )}
-
-          {/* Tomorrow section marker */}
-          {hasTomorrow && chartData[displayToday.length] && (
-            <ReferenceLine
-              x={chartData[displayToday.length].name}
-              stroke={colors.tomorrowLabel}
-              strokeWidth={1}
-              isFront={true}
-            >
-              <Label
-                value="Tomorrow"
-                position="insideTopLeft"
-                fill={colors.tomorrowLabel}
-                fontSize={14}
-                fontWeight="bold"
-                offset={5}
-              />
-            </ReferenceLine>
-          )}
-
           <Bar dataKey="price" radius={[4, 4, 0, 0]}>
             {chartData.map((entry, index) => (
               <Cell
                 key={`cell-${index}`}
                 fill={entry.color}
-                fillOpacity={
-                  activeIndex === index
-                    ? 1
-                    : activeIndex !== null
-                      ? 0.4
-                      : entry.isTomorrow
-                        ? 0.85
-                        : 1
-                }
-                stroke={activeIndex === index ? 'white' : 'none'}
-                strokeWidth={activeIndex === index ? 2 : 0}
+                fillOpacity={entry.isTomorrow ? 0.85 : 1}
               />
             ))}
             <LabelList content={renderPeakLabel} />
           </Bar>
+
+          {/* Current time indicator - shaded highlight */}
+          {currentPeriodIndex >= 0 && chartData[currentPeriodIndex] && (
+            <>
+              {/* Shaded area for current period */}
+              <ReferenceArea
+                x1={chartData[currentPeriodIndex].name}
+                x2={chartData[currentPeriodIndex].name}
+                fill="white"
+                fillOpacity={0.3}
+              />
+              {/* "Now" label */}
+              <ReferenceLine
+                x={chartData[currentPeriodIndex].name}
+                stroke="transparent"
+                label={{ value: "Now", position: "top", fill: "white", fontSize: 14, fontWeight: "bold", offset: 10 }}
+              />
+            </>
+          )}
+
+          {/* Tomorrow section - shaded area */}
+          {hasTomorrow && midnightIndex >= 0 && (
+            <ReferenceArea
+              x1={midnightIndex}
+              x2={chartData.length - 1}
+              fill="white"
+              fillOpacity={0.08}
+              label={{ value: "Tomorrow", position: "insideTopLeft", fill: "rgba(200, 200, 200, 0.8)", fontSize: 14, fontWeight: "bold" }}
+            />
+          )}
         </BarChart>
       </ResponsiveContainer>
+      </div>
     </div>
   );
 };
