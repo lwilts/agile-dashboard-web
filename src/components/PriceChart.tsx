@@ -8,7 +8,6 @@ import {
   Cell,
   ReferenceLine,
   ReferenceArea,
-  Label,
   Tooltip,
   LabelList,
 } from 'recharts';
