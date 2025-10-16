@@ -79,11 +79,17 @@ export const PriceChart = ({
   });
 
 
-  // Calculate Y-axis range - scale to actual data with some headroom for peak labels
+  // Calculate Y-axis range - tight to actual data, labels can overflow if needed
   const maxPrice = Math.max(...displayPrices.map((p) => p.price));
   const minPrice = Math.min(...displayPrices.map((p) => p.price));
-  const yAxisMin = Math.max(0, Math.floor(minPrice / 10) * 10 - 10);
-  const yAxisMax = Math.ceil(maxPrice / 10) * 10 + 5; // Less headroom, just for peak labels
+  const yAxisMin = Math.min(0, Math.floor(minPrice / 10) * 10); // Always include 0, go lower if negative prices
+  const yAxisMax = Math.ceil(maxPrice); // Tight to max, labels overflow into margin
+
+  // Generate Y-axis ticks at 10p intervals
+  const yAxisTicks = Array.from(
+    { length: Math.floor((yAxisMax - yAxisMin) / 10) + 1 },
+    (_, i) => yAxisMin + i * 10
+  );
 
   // Custom label renderer for peak prices
   const renderPeakLabel = (props: any) => {
@@ -109,10 +115,10 @@ export const PriceChart = ({
     );
   };
 
-  // Custom tick formatter for X-axis
+  // Custom tick formatter for X-axis - show every 2 hours
   const formatXAxis = (_value: string, index: number) => {
     const data = chartData[index];
-    if (data && data.minute === 0 && (data.hour % 4 === 0 || data.hour === 0)) {
+    if (data && data.minute === 0 && (data.hour % 2 === 0)) {
       return data.hour.toString();
     }
     return '';
@@ -163,11 +169,11 @@ export const PriceChart = ({
 
   return (
     <div className="chart-container">
-      <div className="chart-wrapper">
-        <ResponsiveContainer width="100%" height={400} minWidth={minChartWidth}>
+      <div className="chart-scroll-area">
+        <ResponsiveContainer width="100%" height={350} minWidth={minChartWidth}>
           <BarChart
           data={chartData}
-          margin={{ top: 40, right: 20, left: 0, bottom: 20 }}
+          margin={{ top: 30, right: 20, left: 10, bottom: 10 }}
         >
           <CartesianGrid strokeDasharray="3 3" stroke={colors.gridline} vertical={false} />
           <XAxis
@@ -179,14 +185,12 @@ export const PriceChart = ({
           />
           <YAxis
             domain={[yAxisMin, yAxisMax]}
-            ticks={Array.from(
-              { length: Math.floor((yAxisMax - yAxisMin) / 10) + 1 },
-              (_, i) => yAxisMin + i * 10
-            )}
+            ticks={yAxisTicks}
             stroke={colors.text}
             tick={{ fill: 'rgb(200, 200, 210)', fontSize: 18 }}
             axisLine={{ stroke: colors.gridline }}
             width={45}
+            label={{ value: 'p/kWh', position: 'top', offset: 20, fill: 'rgb(200, 200, 210)', fontSize: 14 }}
           />
           <Tooltip
             content={<CustomTooltip />}
@@ -204,6 +208,14 @@ export const PriceChart = ({
             ))}
             <LabelList content={renderPeakLabel} />
           </Bar>
+
+          {/* Solid top border to differentiate from gridlines */}
+          <ReferenceLine
+            y={yAxisMax}
+            stroke={colors.gridline}
+            strokeWidth={1}
+            strokeDasharray="0"
+          />
 
           {/* Current time indicator - shaded highlight */}
           {currentPeriodIndex >= 0 && chartData[currentPeriodIndex] && (
