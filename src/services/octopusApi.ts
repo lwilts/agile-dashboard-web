@@ -1,6 +1,7 @@
 import { PriceData } from '../types';
 import { config } from '../config';
 import { cache } from './cache';
+import { localMidnight, toLocalDateString } from '../utils/dates';
 
 interface OctopusApiResponse {
   results: Array<{
@@ -12,14 +13,13 @@ interface OctopusApiResponse {
 
 const parsePriceData = (data: OctopusApiResponse, targetDate: Date): PriceData[] => {
   const prices: PriceData[] = [];
-  const targetDateStr = targetDate.toISOString().split('T')[0];
+  const targetDateStr = toLocalDateString(targetDate);
 
   for (const item of data.results) {
     const validFrom = new Date(item.valid_from);
-    const validFromDateStr = validFrom.toISOString().split('T')[0];
 
     // Only include prices for the target date
-    if (validFromDateStr === targetDateStr) {
+    if (toLocalDateString(validFrom) === targetDateStr) {
       prices.push({
         hour: validFrom.getHours(),
         minute: validFrom.getMinutes(),
@@ -36,7 +36,7 @@ const parsePriceData = (data: OctopusApiResponse, targetDate: Date): PriceData[]
 export const fetchElectricityPrices = async (
   date: Date
 ): Promise<PriceData[]> => {
-  const dateStr = date.toISOString().split('T')[0];
+  const dateStr = toLocalDateString(date);
   const cacheKey = `prices_${dateStr}`;
 
   // Check cache first
@@ -48,14 +48,13 @@ export const fetchElectricityPrices = async (
 
   // Fetch from API
   try {
-    const nextDay = new Date(date);
-    nextDay.setDate(nextDay.getDate() + 1);
-
     const url = `https://api.octopus.energy/v1/products/${config.agileProduct}/electricity-tariffs/E-1R-${config.agileProduct}-${config.region}/standard-unit-rates/`;
 
+    // Ask for the local day, expressed in UTC - not the UTC day, which is an
+    // hour out of step with it under BST.
     const params = new URLSearchParams({
-      period_from: `${dateStr}T00:00:00Z`,
-      period_to: `${nextDay.toISOString().split('T')[0]}T00:00:00Z`,
+      period_from: localMidnight(date).toISOString(),
+      period_to: localMidnight(date, 1).toISOString(),
     });
 
     console.log(`Fetching electricity prices for ${dateStr}...`);

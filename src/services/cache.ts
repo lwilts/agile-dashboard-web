@@ -1,4 +1,5 @@
 import { PriceData, CachedPriceData } from '../types';
+import { toLocalDateString } from '../utils/dates';
 
 const CACHE_PREFIX = 'agile_dashboard_';
 const CACHE_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
@@ -63,7 +64,8 @@ export const cache = {
 
   cleanOldCaches: (): void => {
     try {
-      const today = new Date().toISOString().split('T')[0];
+      // Cache keys are local calendar days, so compare against a local day.
+      const today = toLocalDateString(new Date());
       const keys = Object.keys(localStorage);
       keys.forEach((key) => {
         if (key.startsWith(CACHE_PREFIX + 'prices_')) {
