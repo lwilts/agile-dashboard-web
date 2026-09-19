@@ -1,312 +1,588 @@
+/*
+ * Layout notes
+ * ============
+ * `.dashboard` is `position: fixed; inset: 0` - it sizes to the layout
+ * viewport directly and cannot push the document taller, which is what
+ * actually guarantees zero scroll (a plain `height: 100vh`/`100dvh` would
+ * still let content below it grow the page). `overflow: hidden` on it is a
+ * hard backstop, and `overscroll-behavior: none` below is what stops iOS
+ * rubber-banding the document even when nothing here is meant to move.
+ *
+ * The four sections below (header, tiles, readout, chart) are always the
+ * same four elements in the same order - only their `grid-template-areas`
+ * placement changes between modes. That matters more than it looks: if a
+ * mode were instead a different subtree, rotating the phone would unmount
+ * the chart and destroy its ResizeObserver, its drag state and the current
+ * selection.
+ *
+ * Mode switching uses viewport `@media` queries, not container queries.
+ * Container queries would matter if the page had safe-area padding whose
+ * width isn't visible to `@media` - it doesn't (see the viewport meta in
+ * index.html) - and every real target here (a standalone tab, a Home
+ * Assistant iframe) has its own top-level viewport that `@media` reads
+ * directly, so there is no accuracy to gain and a self-referential-size
+ * cycle to avoid by skipping them.
+ */
+
+:root {
+  /* Fallback values - main.tsx overwrites these from config.ts at startup
+     so TypeScript and CSS share one source. These exist so the page isn't
+     unstyled for the one frame before that runs. */
+  --c-bg: rgb(17, 24, 39);
+  --c-text: rgb(255, 255, 255);
+  --c-green: rgb(34, 197, 94);
+  --c-blue: rgb(59, 130, 246);
+  --c-yellow: rgb(234, 179, 8);
+  --c-red: rgb(239, 68, 68);
+  --c-orange: rgb(251, 146, 60);
+  --c-gridline: rgb(100, 110, 130);
+  --c-zero-line: rgb(180, 180, 200);
+  --c-tomorrow-bg: rgb(40, 50, 70);
+  --c-tomorrow-label: rgb(230, 230, 240);
+}
+
 * {
-  margin: 0;
-  padding: 0;
   box-sizing: border-box;
 }
 
+html {
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+}
+
+html,
 body {
   margin: 0;
   padding: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+}
+
+body {
+  background: var(--c-bg);
+  color: var(--c-text);
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    Oxygen,
+    Ubuntu,
+    Cantarell,
+    'Fira Sans',
+    'Droid Sans',
+    'Helvetica Neue',
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: rgb(17, 24, 39);
-  color: rgb(255, 255, 255);
 }
 
-#root {
-  width: 100%;
-  min-height: 100vh;
-}
+/* ---------- Skeleton: Mode A (tall), the unconditional base ---------- */
 
 .dashboard {
-  background-color: rgb(17, 24, 39);
-  min-height: 100vh;
-  padding: 1rem;
-}
-
-.dashboard-container {
-  max-width: 1200px;
-  margin: 0 auto;
-}
-
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.5rem 0;
-  margin-bottom: 1rem;
-}
-
-.weather-section {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 1.25rem;
-  font-weight: bold;
-}
-
-.time-section {
-  font-size: 1.25rem;
-  font-weight: bold;
-}
-
-.price-boxes-container {
-  margin-bottom: 0.5rem;
-}
-
-.price-boxes-grid {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
   display: grid;
-  grid-template-columns: 2fr 1fr 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
-  gap: 0.75rem;
+  grid-template-columns: 1fr;
+  /* "tiles" cannot be `auto`: .stat-tiles's children are flex-grow items
+     with a 0% basis and (via their own `overflow: hidden`) a zeroed
+     automatic minimum size, so an "auto" track sees no intrinsic content to
+     measure and collapses the whole row to a few px - which then starves
+     every tile's text regardless of how generously its own font-size is
+     allowed to grow. A real floor, growing with the viewport up to 18vh,
+     gives flex-grow something to actually distribute. */
+  grid-template-rows: auto minmax(64px, 18vh) auto minmax(0, 1fr);
+  grid-template-areas:
+    'header'
+    'tiles'
+    'readout'
+    'chart';
+  gap: 0.5rem;
+  padding: 0.65rem;
+  background: var(--c-bg);
+  color: var(--c-text);
+  -webkit-tap-highlight-color: transparent;
 }
 
-.price-box-now {
-  grid-row: span 2;
+.dashboard > * {
+  min-width: 0;
+  min-height: 0;
 }
 
-.price-box {
-  padding: 1rem;
-  border-radius: 0.5rem;
-  color: white;
-  position: relative;
-  transition: transform 0.2s ease;
+.app-header {
+  grid-area: header;
+}
+.stat-tiles {
+  grid-area: tiles;
+}
+.slot-readout {
+  grid-area: readout;
+}
+.price-chart {
+  grid-area: chart;
 }
 
-.price-box:hover {
-  transform: translateY(-2px);
-}
+/* ---------- Loading / error ---------- */
 
-.price-box-label {
-  font-size: 0.875rem;
-  font-weight: bold;
-  opacity: 0.95;
-  margin-bottom: 0.5rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.price-box-value {
-  font-size: 2rem;
-  font-weight: bold;
-  display: flex;
-  align-items: baseline;
-  gap: 0.25rem;
-}
-
-.price-box-now .price-box-label {
-  font-size: 1.25rem;
-}
-
-.price-box-value-now {
-  font-size: 5.5rem;
-}
-
-.price-box-value-now .price-suffix {
-  font-size: 1.75rem;
-}
-
-.price-box-tomorrow {
-  opacity: 0.7;
-}
-
-.price-suffix {
-  font-size: 0.875rem;
-  opacity: 0.9;
-  font-weight: normal;
-}
-
-.chart-container {
-  background-color: rgb(17, 24, 39);
-  padding: 1rem;
-  border-radius: 0.5rem;
-  margin-top: 0.25rem;
-}
-
-.chart-scroll-area {
-  overflow-x: auto;
-  overflow-y: hidden;
-  scroll-behavior: smooth;
-  -webkit-overflow-scrolling: touch;
-}
-
-/* Prominent scrollbar styling */
-.chart-scroll-area::-webkit-scrollbar {
-  height: 12px;
-}
-
-.chart-scroll-area::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 6px;
-}
-
-.chart-scroll-area::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.3);
-  border-radius: 6px;
-}
-
-.chart-scroll-area::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.5);
-}
-
-.loading {
+.loading,
+.error {
+  position: fixed;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 50vh;
-  font-size: 1.5rem;
-}
-
-.error {
-  color: rgb(239, 68, 68);
-  padding: 1rem;
+  padding: 1.5rem;
   text-align: center;
+  background: var(--c-bg);
+  color: var(--c-text);
+  font-size: 1.15rem;
+}
+.error {
+  color: var(--c-red);
 }
 
-/* Responsive design */
-@media (max-width: 1024px) {
-  .price-box-value {
-    font-size: 1.75rem;
-  }
+/* ---------- Header ---------- */
 
-  .price-box-value-now {
-    font-size: 4rem;
-  }
-
-  .price-box-now .price-box-label {
-    font-size: 1rem;
-  }
-
-  .price-box-value-now .price-suffix {
-    font-size: 1.25rem;
-  }
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-weight: 700;
+  font-size: 0.9rem;
+  opacity: 0.95;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.header-weather,
+.header-time {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.header-stale {
+  font-size: 0.5em;
+  color: var(--c-yellow);
 }
 
-@media (max-width: 768px) {
+/* ---------- Stat tiles ---------- */
+/* Full-bleed band colour is the whole tile fill - carried over from the Pi
+   dashboard, where price state has to read across a room. */
+
+.stat-tiles {
+  display: flex;
+  gap: 0.5rem;
+  min-height: 0;
+}
+
+.tile {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0.4rem 0.65rem;
+  border-radius: 0.5rem;
+  color: #fff;
+  overflow: hidden;
+  min-width: 0;
+  /* Lets the value/label text below scale from the tile's own measured box
+     rather than only the viewport. Sizing off viewport height alone
+     overflowed badly once three tiles shared a 320px row (Mode C, too
+     narrow); sizing off width alone then overflowed the other way in a
+     wide-but-short rail tile (Mode B, plenty of width but ~35px tall). Both
+     dimensions of the tile's own size are externally determined (by
+     flexbox, not by this element's own content), so containing both is
+     safe - see the min(cqw, cqh) pairs below. */
+  container-type: size;
+}
+
+.tile--now {
+  flex: 1.3;
+}
+
+.tile--range {
+  flex: 1.3;
+  padding: 0;
+  gap: 2px;
+  background: transparent;
+  /* Its own two .tile-half children each declare their own containment
+     below; .tile--range containing size too, on top of being itself a flex
+     item competing for height in .stat-tiles, was collapsing it to 0
+     height in Mode B's column layout (Chromium; a flex item that is also a
+     size container doesn't reliably get a flex-grow share here - filed as
+     a rendering quirk, not spec-required behaviour). */
+  container-type: normal;
+}
+
+.tile-half {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0.15rem 0.6rem;
+  color: #fff;
+  min-width: 0;
+  overflow: hidden;
+  container-type: size;
+}
+.tile-half-main {
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 0.4em;
+  min-width: 0;
+}
+.tile-half:first-child {
+  border-radius: 0.5rem 0.5rem 0 0;
+}
+.tile-half:last-child {
+  border-radius: 0 0 0.5rem 0.5rem;
+}
+
+.tile-label,
+.tile-inset-label {
+  /* min(cqw, cqh), not either alone: sized off the tile's own measured box
+     so it shrinks in a cramped 3-tiles-in-a-row row (narrow) and in a
+     wide-but-short rail tile (short) alike, without depending on the
+     viewport's shape in either dimension. */
+  font-size: clamp(0.55rem, min(9cqw, 18cqh), 0.75rem);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.85;
+  white-space: nowrap;
+}
+
+.tile-value {
+  font-size: clamp(0.75rem, min(15cqw, 32cqh), 1.6rem);
+  font-weight: 700;
+  line-height: 1.15;
+  display: flex;
+  align-items: baseline;
+  gap: 0.2em;
+  white-space: nowrap;
+}
+.tile-value--hero {
+  font-size: clamp(1.1rem, min(17cqw, 32cqh), 3.2rem);
+}
+
+.tile-unit {
+  font-size: 0.5em;
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+.tile-inset {
+  margin-top: 0.08rem;
+  padding-top: 0.08rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.3);
+  display: flex;
+  align-items: baseline;
+  gap: 0.3em;
+  font-size: clamp(0.55rem, min(8cqw, 16cqh), 0.75rem);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* Bands - one price-to-colour vocabulary shared with the chart bars below. */
+.tile.band--cheap,
+.tile-half.band--cheap {
+  background: var(--c-green);
+}
+.tile.band--moderate,
+.tile-half.band--moderate {
+  background: var(--c-blue);
+}
+.tile.band--peak,
+.tile-half.band--peak {
+  background: var(--c-red);
+}
+.tile.band--unknown,
+.tile-half.band--unknown {
+  background: var(--c-blue);
+}
+/* White text on this yellow is ~1.9:1 - fails contrast outright. Flip to
+   dark text rather than tuning one overlay alpha to work over all four
+   fills. */
+.tile.band--expensive,
+.tile-half.band--expensive {
+  background: var(--c-yellow);
+  color: #241d00;
+}
+.tile.band--expensive .tile-inset,
+.tile-half.band--expensive .tile-inset {
+  border-top-color: rgba(0, 0, 0, 0.35);
+}
+
+.tile--gas {
+  background: var(--c-orange);
+}
+
+/* ---------- Slot readout ---------- */
+/* Always present, never a floating tooltip - this is what removes every
+   clipping/edge-flip/reflow problem a tooltip has on a 4px-wide bar. */
+
+.slot-readout {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.3rem 0.7rem;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 0.4rem;
+  font-size: clamp(0.75rem, 2.2vh, 1rem);
+  overflow: hidden;
+  white-space: nowrap;
+}
+.slot-readout-tag {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.8;
+  font-size: 0.85em;
+}
+.slot-readout-idle .slot-readout-tag {
+  color: var(--c-green);
+}
+.slot-readout-range {
+  opacity: 0.9;
+}
+.slot-readout-price {
+  font-weight: 700;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25em;
+}
+.slot-readout-unit {
+  font-size: 0.7em;
+  font-weight: 500;
+  opacity: 0.85;
+}
+.slot-readout-relative {
+  margin-left: auto;
+  opacity: 0.7;
+  font-size: 0.85em;
+}
+
+.band-text.band--cheap {
+  color: var(--c-green);
+}
+.band-text.band--moderate {
+  color: var(--c-blue);
+}
+.band-text.band--expensive {
+  color: var(--c-yellow);
+}
+.band-text.band--peak {
+  color: var(--c-red);
+}
+
+/* ---------- Chart ---------- */
+
+.price-chart {
+  position: relative;
+  overflow: hidden;
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.price-chart-svg {
+  position: absolute;
+  inset: 0;
+  display: block;
+  /* Vertical gestures chain to the parent (so an embedding page can still be
+     scrolled past the card); horizontal drag is what scrubs the chart. */
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: crosshair;
+}
+.price-chart-svg:focus-visible {
+  outline: 2px solid var(--c-text);
+  outline-offset: -2px;
+}
+
+.chart-gridline {
+  stroke: var(--c-gridline);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  shape-rendering: crispEdges;
+}
+.chart-zero-line {
+  stroke: var(--c-zero-line);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+.chart-y-label {
+  fill: rgb(200, 200, 210);
+  font-size: 11px;
+  font-weight: 700;
+}
+.chart-hour-label {
+  fill: var(--c-text);
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.85;
+}
+
+.chart-bar {
+  shape-rendering: crispEdges;
+}
+.chart-bar.band--cheap {
+  fill: var(--c-green);
+}
+.chart-bar.band--moderate {
+  fill: var(--c-blue);
+}
+.chart-bar.band--expensive {
+  fill: var(--c-yellow);
+}
+.chart-bar.band--peak {
+  fill: var(--c-red);
+}
+.chart-bar-tomorrow {
+  opacity: 0.85;
+}
+
+.chart-tomorrow-wash {
+  fill: var(--c-tomorrow-bg);
+}
+.chart-tomorrow-label {
+  fill: var(--c-tomorrow-label);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.chart-now-line {
+  stroke: rgba(255, 255, 255, 0.35);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+.chart-selection-line {
+  stroke: var(--c-text);
+  stroke-width: 2;
+  shape-rendering: crispEdges;
+}
+
+/*
+ * ---------- Mode overrides ----------
+ * Deliberately placed last: every rule above this point is unconditional
+ * (Mode A plus all component styling), and CSS resolves equal-specificity
+ * conflicts by source order, not by which @media condition is "more
+ * specific" - a mode override declared *before* an unconditional rule for
+ * the same property loses to it the moment that rule appears later in the
+ * file, regardless of whether the media query matches. (That bug shipped
+ * once already: Mode D's `.app-header, .stat-tiles { display: none }` sat
+ * up near the skeleton, while the unconditional `.app-header { display:
+ * flex }` came later in the component sections below it - so the hidden
+ * rule always lost.) Keeping every override down here is what makes that
+ * mistake structurally hard to repeat.
+ */
+
+@media (min-width: 1800px) {
   .dashboard {
+    max-width: 1800px;
+    margin-inline: auto;
+  }
+}
+
+/* ---------- Mode B: rail (short and wide - the landscape fix) ---------- */
+/* Stats consume width instead of height, so the chart keeps the full
+   viewport height instead of being squeezed off it. */
+
+@media (max-height: 520px) and (min-width: 560px) {
+  .dashboard {
+    grid-template-columns: minmax(140px, 190px) minmax(0, 1fr);
+    /* The flexible row goes to "tiles", not "readout": .stat-tiles is a
+       flex-grow column and needs a real allocated height to divide between
+       its three tiles, or "auto" sizing gives it only their unshrinkable
+       minimum (a few px) and the whole rail starves - the readout is a
+       single line and doesn't need to grow. */
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      'header  chart'
+      'tiles   chart'
+      'readout chart';
+    gap: 0.4rem;
     padding: 0.5rem;
   }
 
-  .price-boxes-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    grid-template-rows: auto;
-    gap: 0.5rem;
+  .stat-tiles {
+    flex-direction: column;
   }
 
-  .price-box {
-    padding: 0.75rem;
+  /* In every other mode these flex values divide the row's *width*, where
+     tile--now (the hero) fairly wants the biggest share. Stacked in a
+     column here, the same numbers would divide *height* instead - and
+     tile--range holds two stacked half-tiles worth of content, needing
+     roughly twice a single tile's share, not the same share as
+     tile--now/tile--gas. */
+  .tile--now {
+    flex: 1;
+  }
+  .tile--range {
+    flex: 2;
+  }
+  .tile--gas {
+    flex: 1;
   }
 
-  .price-box-now {
-    grid-column: span 2;
-    grid-row: 1;
-    padding: 1rem;
+  .slot-readout {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.15rem;
   }
 
-  /* Default layout when no tomorrow data (4 items total) */
-  /* Now (child 1) already spans 2 cols, row 1 */
-  /* Min (child 2) and Max (child 3) side by side on row 2 */
-  .price-box:nth-child(2):nth-last-child(3) { grid-column: 1; grid-row: 2; }
-  .price-box:nth-child(3):nth-last-child(2) { grid-column: 2; grid-row: 2; }
-  /* Gas (child 4) spans full width on row 3 */
-  .price-box:nth-child(4):nth-last-child(1) { grid-column: span 2; grid-row: 3; }
-
-  /* Layout when tomorrow data exists (7 items total) */
-  /* Today Min (child 2) paired with Tomorrow Min (child 5) */
-  .price-box:nth-child(2):nth-last-child(6) { grid-column: 1; grid-row: 2; }
-  .price-box:nth-child(5):nth-last-child(3) { grid-column: 2; grid-row: 2; }
-  /* Today Max (child 3) paired with Tomorrow Max (child 6) */
-  .price-box:nth-child(3):nth-last-child(5) { grid-column: 1; grid-row: 3; }
-  .price-box:nth-child(6):nth-last-child(2) { grid-column: 2; grid-row: 3; }
-  /* Today Gas (child 4) paired with Tomorrow Gas (child 7) */
-  .price-box:nth-child(4):nth-last-child(4) { grid-column: 1; grid-row: 4; }
-  .price-box:nth-child(7):nth-last-child(1) { grid-column: 2; grid-row: 4; }
-
-  .price-box-label {
-    font-size: 0.75rem;
-  }
-
-  .price-box-value {
-    font-size: 1.5rem;
-  }
-
-  .price-box-value-now {
-    font-size: 3rem;
-  }
-
-  .price-box-now .price-box-label {
-    font-size: 0.875rem;
-  }
-
-  .price-box-value-now .price-suffix {
-    font-size: 1.125rem;
-  }
-
-  .chart-container {
-    padding: 0.5rem 0.5rem 0.25rem 0.5rem;
-    margin-top: 0;
+  .slot-readout-relative {
+    margin-left: 0;
   }
 }
 
-@media (max-width: 480px) {
-  .header {
-    font-size: 0.875rem;
+/* ---------- Mode C: tight (short and narrow) ---------- */
+/* Header and readout share a row - by grid placement, not by different
+   markup - freeing a whole row of height for the chart. */
+
+@media (max-height: 520px) and (max-width: 559px) {
+  .dashboard {
+    grid-template-columns: auto 1fr;
+    /* Same reasoning as Mode A's "tiles" row - see the comment there. Tiles
+       stay in a row here (not a column, unlike Mode B), so all three get
+       the row's full height rather than dividing it - the floor has to be
+       tall enough on its own for the two-line min/max split tile. */
+    grid-template-rows: auto minmax(68px, 18vh) minmax(0, 1fr);
+    grid-template-areas:
+      'header  readout'
+      'tiles   tiles'
+      'chart   chart';
+    gap: 0.3rem;
+    padding: 0.4rem;
   }
 
-  .weather-section,
-  .time-section {
-    font-size: 1rem;
+  .slot-readout {
+    justify-content: flex-end;
+    background: none;
+    padding: 0;
+  }
+}
+
+/* ---------- Mode D: minimal (very short - e.g. a squat HA card) ---------- */
+/* `overflow: hidden` clips silently rather than scrolling, so below a
+   height where the tiles would be unreadable slivers, drop them instead of
+   losing them. A chart-only card is a legitimate output; clipped tiles
+   aren't. */
+
+@media (max-height: 220px) {
+  .dashboard {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas:
+      'readout'
+      'chart';
+    gap: 0.25rem;
+    padding: 0.35rem;
   }
 
-  .price-boxes-grid {
-    grid-template-columns: 1fr 1fr;
-    grid-template-rows: auto;
-  }
-
-  .price-box-now {
-    grid-column: span 2;
-    grid-row: 1;
-  }
-
-  /* Default layout when no tomorrow data (4 items total) */
-  .price-box:nth-child(2):nth-last-child(3) { grid-column: 1; grid-row: 2; }
-  .price-box:nth-child(3):nth-last-child(2) { grid-column: 2; grid-row: 2; }
-  .price-box:nth-child(4):nth-last-child(1) { grid-column: span 2; grid-row: 3; }
-
-  /* Layout when tomorrow data exists (7 items total) */
-  .price-box:nth-child(2):nth-last-child(6) { grid-column: 1; grid-row: 2; }
-  .price-box:nth-child(5):nth-last-child(3) { grid-column: 2; grid-row: 2; }
-  .price-box:nth-child(3):nth-last-child(5) { grid-column: 1; grid-row: 3; }
-  .price-box:nth-child(6):nth-last-child(2) { grid-column: 2; grid-row: 3; }
-  .price-box:nth-child(4):nth-last-child(4) { grid-column: 1; grid-row: 4; }
-  .price-box:nth-child(7):nth-last-child(1) { grid-column: 2; grid-row: 4; }
-
-  .price-box-value {
-    font-size: 1.5rem;
-  }
-
-  .price-box-value-now {
-    font-size: 2.5rem;
-  }
-
-  .price-box-now .price-box-label {
-    font-size: 0.875rem;
-  }
-
-  .price-box-value-now .price-suffix {
-    font-size: 1rem;
-  }
-
-  .price-suffix {
-    font-size: 0.75rem;
-  }
-
-  .chart-container {
-    padding: 0.5rem 0.5rem 0.25rem 0.5rem;
-    margin-top: 0;
+  .app-header,
+  .stat-tiles {
+    display: none;
   }
 }

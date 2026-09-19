@@ -1,254 +1,217 @@
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  ResponsiveContainer,
-  Cell,
-  ReferenceLine,
-  ReferenceArea,
-  Tooltip,
-  LabelList,
-} from 'recharts';
+import { useCallback, useMemo, type KeyboardEvent, type PointerEvent } from 'react';
 import { PriceData } from '../types';
-import { getPriceColor, colors } from '../config';
+import { getPriceBand } from '../config';
+import { useElementSize } from '../hooks/useElementSize';
+import { computeChartLayout, slotIndexAtX, ChartSlot } from '../chart/layout';
+import { findCurrentSlotIndex, formatSlotRange } from '../utils/prices';
 
 interface PriceChartProps {
-  todayPrices: PriceData[];
-  tomorrowPrices: PriceData[];
-  currentHour: number;
-  currentMinute: number;
+  /** The chart's time window: current half-hour through the end of published data (see buildChartWindow). */
+  window: PriceData[];
+  /** `tomorrowPrices[0]?.timestamp.getTime() ?? null` - marks where the tomorrow wash begins. */
+  firstTomorrowTimestamp: number | null;
+  now: Date;
+  selectedTimestamp: number | null;
+  /** `sticky: true` means "keep showing this until something else selects or the idle timeout fires" (a tap); `false` is a live hover/drag preview. */
+  onSelect: (timestamp: number | null, sticky: boolean) => void;
 }
 
 export const PriceChart = ({
-  todayPrices,
-  tomorrowPrices,
-  currentHour,
-  currentMinute,
+  window: slots,
+  firstTomorrowTimestamp,
+  now,
+  selectedTimestamp,
+  onSelect,
 }: PriceChartProps) => {
+  const [containerRef, size] = useElementSize<HTMLDivElement>();
 
-  const hasTomorrow = tomorrowPrices.length > 0;
-
-  // If we have tomorrow's data, show from a few hours before current time
-  const displayToday = hasTomorrow && todayPrices.length >= 48
-    ? (() => {
-        // Calculate the starting index - show from 6 hours before current time
-        const hoursBack = 6;
-        const startHour = Math.max(0, currentHour - hoursBack);
-        const startIndex = startHour * 2; // 2 entries per hour (30 min intervals)
-        return todayPrices.slice(startIndex);
-      })()
-    : todayPrices;
-
-  const displayPrices = [...displayToday, ...tomorrowPrices];
-
-  if (displayPrices.length === 0) {
-    return <div className="chart-container">No price data available</div>;
-  }
-
-  // Calculate current period minute (0 or 30)
-  const currentPeriodMinute = Math.floor(currentMinute / 30) * 30;
-
-  // Calculate max prices for peak labels
-  const todayMaxInDisplay = displayToday.length > 0 ? Math.max(...displayToday.map((p) => p.price)) : 0;
-  const tomorrowMaxInDisplay = tomorrowPrices.length > 0 ? Math.max(...tomorrowPrices.map((p) => p.price)) : 0;
-
-  // Prepare data for Recharts
-  const chartData = displayPrices.map((price, index) => {
-    const isCurrentPeriod =
-      price.hour === currentHour &&
-      price.minute === currentPeriodMinute &&
-      index < displayToday.length;
-
-    // Determine if this is a peak price
-    const isPeakToday = index < displayToday.length && price.price === todayMaxInDisplay;
-    const isPeakTomorrow = index >= displayToday.length && price.price === tomorrowMaxInDisplay;
-    const peakLabel = (isPeakToday || isPeakTomorrow) ? price.price.toFixed(1) : '';
-
-    return {
-      name: `${price.hour.toString().padStart(2, '0')}:${price.minute.toString().padStart(2, '0')}`,
-      price: price.price,
-      hour: price.hour,
-      minute: price.minute,
-      color: getPriceColor(price.price),
-      isTomorrow: index >= displayToday.length,
-      isCurrentPeriod,
-      peakLabel,
-    };
-  });
-
-
-  // Calculate Y-axis range - tight to actual data, labels can overflow if needed
-  const maxPrice = Math.max(...displayPrices.map((p) => p.price));
-  const minPrice = Math.min(...displayPrices.map((p) => p.price));
-  const yAxisMin = Math.min(0, Math.floor(minPrice / 10) * 10); // Always include 0, go lower if negative prices
-  const yAxisMax = Math.ceil(maxPrice); // Tight to max, labels overflow into margin
-
-  // Generate Y-axis ticks at 10p intervals
-  const yAxisTicks = Array.from(
-    { length: Math.floor((yAxisMax - yAxisMin) / 10) + 1 },
-    (_, i) => yAxisMin + i * 10
+  const chartSlots: ChartSlot[] = useMemo(
+    () =>
+      slots.map((p) => ({
+        key: p.timestamp.getTime(),
+        hour: p.hour,
+        minute: p.minute,
+        price: p.price,
+        isTomorrow: firstTomorrowTimestamp !== null && p.timestamp.getTime() >= firstTomorrowTimestamp,
+      })),
+    [slots, firstTomorrowTimestamp]
   );
 
-  // Custom label renderer for peak prices
-  const renderPeakLabel = (props: any) => {
-    const { x, y, width, index } = props;
+  const geometry = useMemo(
+    () => (size ? computeChartLayout({ w: size.width, h: size.height }, chartSlots, getPriceBand) : null),
+    [size, chartSlots]
+  );
 
-    // Get the data point for this bar
-    const dataPoint = chartData[index];
-    if (!dataPoint || !dataPoint.peakLabel) {
-      return null;
+  const nowIndex = useMemo(() => findCurrentSlotIndex(slots, now), [slots, now]);
+  const selectedIndex = useMemo(
+    () => (selectedTimestamp === null ? -1 : slots.findIndex((p) => p.timestamp.getTime() === selectedTimestamp)),
+    [slots, selectedTimestamp]
+  );
+
+  const selectFromPointer = useCallback(
+    (clientX: number, target: SVGSVGElement, sticky: boolean) => {
+      if (!geometry) return;
+      const rect = target.getBoundingClientRect();
+      const x = clientX - rect.left;
+      const index = slotIndexAtX(geometry, x);
+      const slot = slots[index];
+      if (slot) onSelect(slot.timestamp.getTime(), sticky);
+    },
+    [geometry, slots, onSelect]
+  );
+
+  const handlePointerDown = (e: PointerEvent<SVGSVGElement>) => {
+    // Only touch/pen need capture: without it, dragging off a chart that
+    // can be as little as ~130px tall - which will happen constantly -
+    // orphans the gesture. A mouse doesn't need it; plain hover already
+    // tracks below, capture would only make pointerleave fire later than
+    // the cursor visually leaving.
+    if (e.pointerType !== 'mouse') {
+      e.currentTarget.setPointerCapture(e.pointerId);
     }
-
-    return (
-      <text
-        x={x + width / 2}
-        y={y - 8}
-        fill={dataPoint.color}
-        textAnchor="middle"
-        fontSize={18}
-        fontWeight="bold"
-      >
-        {dataPoint.peakLabel}
-      </text>
-    );
+    selectFromPointer(e.clientX, e.currentTarget, false);
   };
 
-  // Custom tick formatter for X-axis - show every 2 hours
-  const formatXAxis = (_value: string, index: number) => {
-    const data = chartData[index];
-    if (data && data.minute === 0 && (data.hour % 2 === 0)) {
-      return data.hour.toString();
+  const handlePointerMove = (e: PointerEvent<SVGSVGElement>) => {
+    // A mouse scrubs on plain hover, no click-drag required - "the same row
+    // follows the mouse". Touch/pen only updates while actively dragging
+    // (pointer capture from handlePointerDown).
+    if (e.pointerType === 'mouse' || e.currentTarget.hasPointerCapture(e.pointerId)) {
+      selectFromPointer(e.clientX, e.currentTarget, false);
     }
-    return '';
   };
 
-  // Custom tooltip
-  const CustomTooltip = ({ active, payload }: any) => {
-    if (active && payload && payload.length) {
-      const data = payload[0].payload;
-      // Calculate end time (30 minutes later)
-      const startHour = data.hour;
-      const startMin = data.minute;
-      const endMin = (startMin + 30) % 60;
-      const endHour = startMin + 30 >= 60 ? (startHour + 1) % 24 : startHour;
-
-      const timeRange = `${startHour.toString().padStart(2, '0')}:${startMin.toString().padStart(2, '0')} - ${endHour.toString().padStart(2, '0')}:${endMin.toString().padStart(2, '0')}`;
-
-      return (
-        <div
-          style={{
-            backgroundColor: 'rgba(0, 0, 0, 0.9)',
-            padding: '0.75rem 1rem',
-            borderRadius: '0.5rem',
-            border: `2px solid ${data.color}`,
-            color: 'white',
-          }}
-        >
-          <div style={{ fontSize: '0.875rem', opacity: 0.9, marginBottom: '0.25rem' }}>
-            {timeRange}
-          </div>
-          <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: data.color }}>
-            {data.price.toFixed(1)} <span style={{ fontSize: '0.875rem', opacity: 0.9 }}>p/kWh</span>
-          </div>
-        </div>
-      );
+  const finishDrag = (e: PointerEvent<SVGSVGElement>) => {
+    // A tap or drag leaves its selection visible (sticky); a mouse keeps
+    // live-hover semantics and reverts on pointerleave instead.
+    if (e.pointerType !== 'mouse' && e.currentTarget.hasPointerCapture(e.pointerId)) {
+      selectFromPointer(e.clientX, e.currentTarget, true);
     }
-    return null;
   };
 
-  // Find the current period for the "Now" line
-  const currentPeriodIndex = chartData.findIndex((d) => d.isCurrentPeriod);
+  const handlePointerLeave = (e: PointerEvent<SVGSVGElement>) => {
+    // Only a mouse reverts to idle on leave. pointerleave fires right after
+    // a tap on hybrid devices, which would otherwise cancel the sticky
+    // selection just made.
+    if (e.pointerType === 'mouse') {
+      onSelect(null, false);
+    }
+  };
 
-  // Find midnight (00:00) for the "Tomorrow" marker
-  const midnightIndex = chartData.findIndex((d) => d.hour === 0 && d.minute === 0);
+  const handleKeyDown = (e: KeyboardEvent<SVGSVGElement>) => {
+    if (slots.length === 0) return;
+    const base = selectedIndex >= 0 ? selectedIndex : nowIndex >= 0 ? nowIndex : 0;
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      const next = Math.max(0, base - 1);
+      onSelect(slots[next].timestamp.getTime(), true);
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      const next = Math.min(slots.length - 1, base + 1);
+      onSelect(slots[next].timestamp.getTime(), true);
+    } else if (e.key === 'Escape') {
+      onSelect(null, false);
+    }
+  };
 
-  // Calculate minimum chart width for mobile (minimum 12px per bar)
-  const minChartWidth = Math.max(600, chartData.length * 12);
+  const ariaLabel =
+    slots.length > 0
+      ? `Price chart, ${slots.length} half-hour slots from ${formatSlotRange(slots[0])} to ${formatSlotRange(slots[slots.length - 1])}`
+      : 'Price chart, no data available';
 
   return (
-    <div className="chart-container">
-      <div className="chart-scroll-area">
-        <ResponsiveContainer width="100%" height={350} minWidth={minChartWidth}>
-          <BarChart
-          data={chartData}
-          margin={{ top: 30, right: 20, left: 10, bottom: 10 }}
+    <div className="price-chart" ref={containerRef}>
+      {geometry && (
+        <svg
+          className="price-chart-svg"
+          width={geometry.width}
+          height={geometry.height}
+          role="img"
+          aria-label={ariaLabel}
+          tabIndex={0}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={finishDrag}
+          onPointerCancel={finishDrag}
+          onPointerLeave={handlePointerLeave}
+          onKeyDown={handleKeyDown}
         >
-          <CartesianGrid strokeDasharray="3 3" stroke={colors.gridline} vertical={false} />
-          <XAxis
-            dataKey="name"
-            tickFormatter={formatXAxis}
-            stroke={colors.text}
-            tick={{ fill: colors.text, fontSize: 16 }}
-            axisLine={{ stroke: colors.gridline }}
-          />
-          <YAxis
-            domain={[yAxisMin, yAxisMax]}
-            ticks={yAxisTicks}
-            stroke={colors.text}
-            tick={{ fill: 'rgb(200, 200, 210)', fontSize: 18 }}
-            axisLine={{ stroke: colors.gridline }}
-            width={45}
-            label={{ value: 'p/kWh', position: 'top', offset: 20, fill: 'rgb(200, 200, 210)', fontSize: 14 }}
-          />
-          <Tooltip
-            content={<CustomTooltip />}
-            cursor={{ fill: 'rgba(255, 255, 255, 0.1)' }}
-            animationDuration={100}
-          />
-
-          <Bar dataKey="price" radius={[4, 4, 0, 0]}>
-            {chartData.map((entry, index) => (
-              <Cell
-                key={`cell-${index}`}
-                fill={entry.color}
-                fillOpacity={entry.isTomorrow ? 0.85 : 1}
-              />
-            ))}
-            <LabelList content={renderPeakLabel} />
-          </Bar>
-
-          {/* Solid top border to differentiate from gridlines */}
-          <ReferenceLine
-            y={yAxisMax}
-            stroke={colors.gridline}
-            strokeWidth={1}
-            strokeDasharray="0"
-          />
-
-          {/* Current time indicator - shaded highlight */}
-          {currentPeriodIndex >= 0 && chartData[currentPeriodIndex] && (
+          {geometry.tomorrowStartX !== null && (
             <>
-              {/* Shaded area for current period */}
-              <ReferenceArea
-                x1={chartData[currentPeriodIndex].name}
-                x2={chartData[currentPeriodIndex].name}
-                fill="white"
-                fillOpacity={0.3}
+              <rect
+                className="chart-tomorrow-wash"
+                x={geometry.tomorrowStartX}
+                y={geometry.plotTop}
+                width={geometry.plotRight - geometry.tomorrowStartX}
+                height={geometry.plotBottom - geometry.plotTop}
               />
-              {/* "Now" label */}
-              <ReferenceLine
-                x={chartData[currentPeriodIndex].name}
-                stroke="transparent"
-                label={{ value: "Now", position: "top", fill: "white", fontSize: 14, fontWeight: "bold", offset: 10 }}
-              />
+              <text className="chart-tomorrow-label" x={geometry.tomorrowStartX + 4} y={geometry.plotTop + 12}>
+                TOMORROW
+              </text>
             </>
           )}
 
-          {/* Tomorrow section - shaded area */}
-          {hasTomorrow && midnightIndex >= 0 && (
-            <ReferenceArea
-              x1={midnightIndex}
-              x2={chartData.length - 1}
-              fill="white"
-              fillOpacity={0.08}
-              label={{ value: "Tomorrow", position: "insideTopLeft", fill: "rgba(200, 200, 200, 0.8)", fontSize: 14, fontWeight: "bold" }}
+          {geometry.gridlines.map((line) => (
+            <line
+              key={line.value}
+              className={line.value === 0 && geometry.hasNegative ? 'chart-zero-line' : 'chart-gridline'}
+              x1={geometry.plotLeft}
+              x2={geometry.plotRight}
+              y1={Math.round(line.y) + 0.5}
+              y2={Math.round(line.y) + 0.5}
+            />
+          ))}
+          {geometry.gridlines.map((line) => (
+            <text
+              key={`label-${line.value}`}
+              className="chart-y-label"
+              x={geometry.plotLeft - 6}
+              y={line.y}
+              textAnchor="end"
+              dominantBaseline="middle"
+            >
+              {line.value}
+            </text>
+          ))}
+
+          {geometry.bars.map((bar) => (
+            <rect
+              key={bar.key}
+              className={`chart-bar band--${bar.band}${bar.isTomorrow ? ' chart-bar-tomorrow' : ''}`}
+              x={bar.x}
+              y={bar.yTop}
+              width={bar.width}
+              height={Math.max(0, bar.yBottom - bar.yTop)}
+            />
+          ))}
+
+          {geometry.hourLabels.map((label) => (
+            <text key={label.x} className="chart-hour-label" x={label.x} y={geometry.plotBottom + 14} textAnchor="middle">
+              {label.label}
+            </text>
+          ))}
+
+          {nowIndex >= 0 && geometry.bars[nowIndex] && (
+            <line
+              className="chart-now-line"
+              x1={geometry.bars[nowIndex].x}
+              x2={geometry.bars[nowIndex].x}
+              y1={geometry.plotTop}
+              y2={geometry.plotBottom}
             />
           )}
-        </BarChart>
-      </ResponsiveContainer>
-      </div>
+
+          {selectedIndex >= 0 && geometry.bars[selectedIndex] && (
+            <line
+              className="chart-selection-line"
+              x1={geometry.bars[selectedIndex].x + geometry.bars[selectedIndex].width / 2}
+              x2={geometry.bars[selectedIndex].x + geometry.bars[selectedIndex].width / 2}
+              y1={geometry.plotTop}
+              y2={geometry.plotBottom}
+            />
+          )}
+        </svg>
+      )}
     </div>
   );
 };

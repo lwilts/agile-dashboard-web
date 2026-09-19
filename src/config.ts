@@ -16,28 +16,34 @@ declare global {
   }
 }
 
-// Read configuration from environment variables (with defaults)
-// Supports both build-time (Vite) and runtime (Docker) configuration
-const getEnvVar = (key: string, defaultValue: string): string => {
-  // Try runtime config first (Docker)
-  if (window.RUNTIME_CONFIG && window.RUNTIME_CONFIG[key as keyof typeof window.RUNTIME_CONFIG]) {
-    return String(window.RUNTIME_CONFIG[key as keyof typeof window.RUNTIME_CONFIG]);
-  }
-  // Fall back to build-time config (Vite)
-  // @ts-ignore - import.meta.env is Vite-specific
-  return import.meta.env[key] || defaultValue;
+type RuntimeConfigKey = keyof NonNullable<Window['RUNTIME_CONFIG']>;
+
+// Read configuration from environment variables (with defaults).
+// Supports both build-time (Vite) and runtime (Docker) configuration.
+//
+// Presence is checked explicitly (`!== undefined`) rather than by truthiness.
+// `0` and `''` are valid configured values here - a weather longitude of 0
+// (Greenwich) or a price threshold of 0 - and `value || default` would
+// silently discard them.
+const getEnvVar = (key: RuntimeConfigKey, defaultValue: string): string => {
+  const runtimeValue = window.RUNTIME_CONFIG?.[key];
+  if (runtimeValue !== undefined) return String(runtimeValue);
+
+  const buildValue = import.meta.env[key];
+  return buildValue !== undefined && buildValue !== '' ? buildValue : defaultValue;
 };
 
-const getEnvNumber = (key: string, defaultValue: number): number => {
-  // Try runtime config first (Docker)
-  if (window.RUNTIME_CONFIG && window.RUNTIME_CONFIG[key as keyof typeof window.RUNTIME_CONFIG]) {
-    const value = window.RUNTIME_CONFIG[key as keyof typeof window.RUNTIME_CONFIG];
-    return typeof value === 'number' ? value : parseFloat(String(value));
+const getEnvNumber = (key: RuntimeConfigKey, defaultValue: number): number => {
+  const runtimeValue = window.RUNTIME_CONFIG?.[key];
+  if (runtimeValue !== undefined) {
+    const parsed = typeof runtimeValue === 'number' ? runtimeValue : parseFloat(String(runtimeValue));
+    return Number.isFinite(parsed) ? parsed : defaultValue;
   }
-  // Fall back to build-time config (Vite)
-  // @ts-ignore
-  const value = import.meta.env[key];
-  return value ? parseFloat(value) : defaultValue;
+
+  const buildValue = import.meta.env[key];
+  if (buildValue === undefined || buildValue === '') return defaultValue;
+  const parsed = parseFloat(buildValue);
+  return Number.isFinite(parsed) ? parsed : defaultValue;
 };
 
 export const config: Config = {
@@ -51,7 +57,9 @@ export const config: Config = {
   thresholdExpensive: getEnvNumber('VITE_THRESHOLD_EXPENSIVE', 35),
 };
 
-// Color scheme
+// Colour tokens - the single source for both the CSS custom properties
+// (mirrored onto :root in main.tsx) and the few call sites that need a
+// literal value rather than a class.
 export const colors = {
   background: 'rgb(17, 24, 39)',
   text: 'rgb(255, 255, 255)',
@@ -61,13 +69,44 @@ export const colors = {
   red: 'rgb(239, 68, 68)',
   yellow: 'rgb(234, 179, 8)',
   gridline: 'rgb(100, 110, 130)',
+  zeroLine: 'rgb(180, 180, 200)',
   tomorrowBg: 'rgb(40, 50, 70)',
   tomorrowLabel: 'rgb(230, 230, 240)',
 };
 
-export const getPriceColor = (price: number): string => {
-  if (price < config.thresholdCheap) return colors.green;
-  if (price < config.thresholdModerate) return colors.blue;
-  if (price < config.thresholdExpensive) return colors.yellow;
-  return colors.red;
+/**
+ * A price band, not a colour. SVG presentation attributes (`fill="..."`)
+ * can't read CSS custom properties - `fill="var(--c-green)"` renders black,
+ * because `var()` only resolves inside a CSS declaration. So callers select
+ * a colour via a `.band--<name>` class instead of a literal string; this is
+ * the one encoding both the stat tiles and the chart bars share.
+ */
+export type PriceBand = 'cheap' | 'moderate' | 'expensive' | 'peak';
+
+export const BAND_ORDER: readonly PriceBand[] = ['cheap', 'moderate', 'expensive', 'peak'];
+
+export const getPriceBand = (price: number): PriceBand => {
+  if (price < config.thresholdCheap) return 'cheap';
+  if (price < config.thresholdModerate) return 'moderate';
+  if (price < config.thresholdExpensive) return 'expensive';
+  return 'peak';
+};
+
+/**
+ * Literal colour for a band - for the handful of places that can't use a
+ * CSS class (canvas/image export, a <meta theme-color>). Tiles and bars
+ * should use `.band--<name>` instead so there is exactly one place price
+ * maps to colour.
+ */
+export const bandColor = (band: PriceBand): string => {
+  switch (band) {
+    case 'cheap':
+      return colors.green;
+    case 'moderate':
+      return colors.blue;
+    case 'expensive':
+      return colors.yellow;
+    case 'peak':
+      return colors.red;
+  }
 };
