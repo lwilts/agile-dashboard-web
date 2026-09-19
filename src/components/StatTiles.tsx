@@ -36,28 +36,32 @@ export const StatTiles = ({ currentPrice, todayMin, todayMax, tomorrowMin, tomor
 
     <div className="tile tile--range">
       <div className={`tile-half ${bandClass(todayMin?.price ?? null)}`}>
-        <div className="tile-half-main">
-          <span className="tile-label">Min</span>
-          <span className="tile-value">{formatPrice(todayMin?.price ?? null)}</span>
-        </div>
-        {hasTomorrow && tomorrowMin && (
-          <div className="tile-inset">
-            <span className="tile-inset-label">Tmrw</span>
-            <span className="tile-inset-value">{formatPrice(tomorrowMin.price)}</span>
+        <div className="tile-half-cols">
+          <div className="tile-half-col">
+            <span className="tile-label">Min</span>
+            <span className="tile-value">{formatPrice(todayMin?.price ?? null)}</span>
           </div>
-        )}
+          {hasTomorrow && tomorrowMin && (
+            <div className="tile-half-col tile-half-col--tmrw">
+              <span className="tile-inset-label">Tmrw</span>
+              <span className="tile-inset-value">{formatPrice(tomorrowMin.price)}</span>
+            </div>
+          )}
+        </div>
       </div>
       <div className={`tile-half ${bandClass(todayMax?.price ?? null)}`}>
-        <div className="tile-half-main">
-          <span className="tile-label">Max</span>
-          <span className="tile-value">{formatPrice(todayMax?.price ?? null)}</span>
-        </div>
-        {hasTomorrow && tomorrowMax && (
-          <div className="tile-inset">
-            <span className="tile-inset-label">Tmrw</span>
-            <span className="tile-inset-value">{formatPrice(tomorrowMax.price)}</span>
+        <div className="tile-half-cols">
+          <div className="tile-half-col">
+            <span className="tile-label">Max</span>
+            <span className="tile-value">{formatPrice(todayMax?.price ?? null)}</span>
           </div>
-        )}
+          {hasTomorrow && tomorrowMax && (
+            <div className="tile-half-col tile-half-col--tmrw">
+              <span className="tile-inset-label">Tmrw</span>
+              <span className="tile-inset-value">{formatPrice(tomorrowMax.price)}</span>
+            </div>
+          )}
+        </div>
       </div>
     </div>
 

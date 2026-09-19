@@ -224,12 +224,52 @@ body {
   overflow: hidden;
   container-type: size;
 }
-.tile-half-main {
-  display: flex;
-  flex-direction: row;
-  align-items: baseline;
-  gap: 0.4em;
+.tile-half-cols {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  /* A definite height for the row itself, not "auto": .tile-half-col below
+     needs one (see its comment), and an "auto" row sizes to its item's
+     content - which `container-type: size` on that same item forbids
+     measuring, collapsing it to 0 height. .tile-half is already a definite,
+     externally-sized box, so 100% of it is definite too. */
+  height: 100%;
+  grid-template-rows: 1fr;
+  column-gap: 0.6em;
+  /* stretch (the default, but explicit here as a reminder), not center:
+     a centered grid item sizes to its own content height, which
+     .tile-half-col's `container-type: size` forbids it from doing -
+     collapsing it to 0. Stretching gives it the row's real height instead;
+     .tile-half-col's own justify-content: center below still centers its
+     label/value inside that full-height box. */
+  align-items: stretch;
+  width: 100%;
   min-width: 0;
+}
+.tile-half-col {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  /* Its label/value text is sized in cqw/cqh, which resolves against the
+     nearest size-container ancestor - without this, that's .tile-half's
+     full width, so "TMRW" (sized to comfortably fit the *whole* tile) ran
+     over once a second column halved the space actually available to it.
+     Grid's `1fr` (both here and on .tile-half-cols above) gives this column
+     a size fully determined by its parent's track sizing, not by this
+     column's own content, so containing it here is safe for the same
+     reason it was on .tile/.tile-half. */
+  container-type: size;
+}
+.tile-half-col--tmrw {
+  padding-left: 0.5em;
+  border-left: 1px solid rgba(255, 255, 255, 0.3);
+}
+.tile.band--expensive .tile-half-col--tmrw,
+.tile-half.band--expensive .tile-half-col--tmrw {
+  border-left-color: rgba(0, 0, 0, 0.35);
 }
 .tile-half:first-child {
   border-radius: 0.5rem 0.5rem 0 0;
@@ -251,9 +291,16 @@ body {
   opacity: 0.85;
   white-space: nowrap;
 }
+/* "Tmrw" is one character longer than "Min"/"Max" but sits in the same
+   half-width column once both columns exist - its own smaller floor and no
+   letter-spacing close the gap that left it clipped at narrow widths. */
+.tile-inset-label {
+  font-size: clamp(0.42rem, min(9cqw, 18cqh), 0.75rem);
+  letter-spacing: 0;
+}
 
 .tile-value {
-  font-size: clamp(0.75rem, min(15cqw, 32cqh), 1.6rem);
+  font-size: clamp(0.8rem, min(17cqw, 30cqh), 1.7rem);
   font-weight: 700;
   line-height: 1.15;
   display: flex;
@@ -271,6 +318,15 @@ body {
   opacity: 0.85;
 }
 
+.tile-inset-value {
+  font-size: clamp(0.5rem, min(13cqw, 24cqh), 1.1rem);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* Wraps the Gas tile's tomorrow row (a stacked second line, unlike the
+   Min/Max half's tomorrow *column* above - Gas only ever shows one figure,
+   so there's no second column to give it). */
 .tile-inset {
   margin-top: 0.08rem;
   padding-top: 0.08rem;
@@ -278,9 +334,9 @@ body {
   display: flex;
   align-items: baseline;
   gap: 0.3em;
-  font-size: clamp(0.55rem, min(8cqw, 16cqh), 0.75rem);
-  font-weight: 700;
-  white-space: nowrap;
+}
+.tile.band--expensive .tile-inset {
+  border-top-color: rgba(0, 0, 0, 0.35);
 }
 
 /* Bands - one price-to-colour vocabulary shared with the chart bars below. */
@@ -307,10 +363,6 @@ body {
 .tile-half.band--expensive {
   background: var(--c-yellow);
   color: #241d00;
-}
-.tile.band--expensive .tile-inset,
-.tile-half.band--expensive .tile-inset {
-  border-top-color: rgba(0, 0, 0, 0.35);
 }
 
 .tile--gas {
@@ -346,6 +398,15 @@ body {
   opacity: 0.9;
 }
 .slot-readout-price {
+  /* Sized to read at roughly the same weight as the Min/Max tile value
+     (.tile-value). Can't literally share that clamp: .tile-value's cqw/cqh
+     terms depend on .tile-half being a `container-type: size` box sitting
+     in a definite-size grid track - .slot-readout sits in an `auto` track
+     (it must size to its own content, which varies by mode), and `auto` +
+     `container-type: size` on the same element is a contradiction the
+     browser resolves by collapsing it to near-zero height. vh/vw avoid
+     that, at the cost of not being driven by one literal shared formula. */
+  font-size: clamp(1rem, min(4vh, 6vw), 1.8rem);
   font-weight: 700;
   display: inline-flex;
   align-items: baseline;
