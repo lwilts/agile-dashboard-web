@@ -1,4 +1,4 @@
-import { useCallback, useMemo, type KeyboardEvent, type PointerEvent } from 'react';
+import { useCallback, useEffect, useMemo, type KeyboardEvent, type PointerEvent } from 'react';
 import { PriceData } from '../types';
 import { getPriceBand } from '../config';
 import { useElementSize } from '../hooks/useElementSize';
@@ -47,6 +47,22 @@ export const PriceChart = ({
     () => (selectedTimestamp === null ? -1 : slots.findIndex((p) => p.timestamp.getTime() === selectedTimestamp)),
     [slots, selectedTimestamp]
   );
+
+  // A sticky (tapped) selection had no way to dismiss on mobile other than
+  // waiting out the idle timeout - there's no hover to leave, and the chart
+  // fills the touch target so nothing else on it was reachable to clear it.
+  // Any pointerdown outside the chart now clears it immediately.
+  useEffect(() => {
+    if (selectedTimestamp === null) return;
+    const handleOutsidePointerDown = (e: globalThis.PointerEvent) => {
+      const container = containerRef.current;
+      if (container && e.target instanceof Node && !container.contains(e.target)) {
+        onSelect(null, false);
+      }
+    };
+    document.addEventListener('pointerdown', handleOutsidePointerDown);
+    return () => document.removeEventListener('pointerdown', handleOutsidePointerDown);
+  }, [selectedTimestamp, containerRef, onSelect]);
 
   const selectFromPointer = useCallback(
     (clientX: number, target: SVGSVGElement, sticky: boolean) => {

@@ -16,7 +16,7 @@ import { buildChartWindow, extremes, findCurrentSlotIndex } from './utils/prices
 const DATA_INTERVAL = 5 * 60 * 1000; // 5 minutes
 const CLOCK_INTERVAL = 30 * 1000; // moves the "Now" marker
 const CHART_MIN_SLOTS = 12; // floor for the chart window near midnight, before tomorrow publishes
-const SELECTION_IDLE_MS = 45 * 1000; // reverts a sticky (tap) selection if left untouched
+const SELECTION_IDLE_MS = 5 * 1000; // reverts a sticky (tap) selection if left untouched
 const SLOT_MS = 30 * 60 * 1000;
 
 // Dev-only fixtures for edge cases (negative prices, DST days, API failure)
